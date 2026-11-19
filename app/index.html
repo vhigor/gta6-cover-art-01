@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vice Coast Cover Studio — GTA 6-style cover art, offline</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2312081f'/%3E%3Ctext x='16' y='23' font-size='20' text-anchor='middle' fill='%23ffd166'%3E%E2%98%85%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">★</span>
+    <div>
+      <h1>Vice Coast Cover Studio</h1>
+      <p>Turn any photo into GTA 6-style cover art — offline, on your machine.</p>
+    </div>
+  </div>
+  <div class="top-actions">
+    <button id="undo" type="button" disabled>↩ Undo</button>
+    <button id="redo" type="button" disabled>↪ Redo</button>
+  </div>
+</header>
+
+<main class="app">
+  <section class="controls" aria-label="Cover controls">
+    <div class="group">
+      <h2>1 · Photos</h2>
+      <div id="photoSlots" class="slots"></div>
+      <div class="row">
+        <button id="addPhotos" type="button">Add your photos</button>
+        <button id="samplePier" type="button" class="ghost">Sample: Pier</button>
+        <button id="sampleBoulevard" type="button" class="ghost">Sample: Boulevard</button>
+      </div>
+      <p class="hint">Photos never leave this machine. Up to four — panels can share one photo or mix several.</p>
+    </div>
+
+    <div class="group">
+      <h2>2 · Layout</h2>
+      <div id="layoutRow" class="chips"></div>
+    </div>
+
+    <div class="group">
+      <h2>3 · Colour grade</h2>
+      <div id="gradeRow" class="chips"></div>
+    </div>
+
+    <div class="group">
+      <h2>4 · Panel <span id="panelLabel" class="panel-label"></span></h2>
+      <p class="hint">Click a panel on the cover to select it, drag it to reposition the photo, scroll to zoom.</p>
+      <label>Photo in this panel
+        <select id="panelPhoto"></select>
+      </label>
+      <label>Zoom <span id="panelZoomVal">1.00×</span>
+        <input id="panelZoom" type="range" min="1" max="3" step="0.05" value="1">
+      </label>
+      <div class="row">
+        <button id="panelReset" type="button" class="ghost">Reset view</button>
+        <button id="fillAll" type="button" class="ghost">Fill all panels with this photo</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>5 · Caption</h2>
+      <label>Title
+        <input id="title" type="text" maxlength="24" value="Neon Coast">
+      </label>
+      <label>Subtitle (script)
+        <input id="subtitle" type="text" maxlength="40" value="a vice coast story">
+      </label>
+      <label>Star meter
+        <span id="starsRow" class="stars"></span>
+      </label>
+      <label class="check">
+        <input id="grainToggle" type="checkbox" checked> Film grain + vignette
+      </label>
+    </div>
+
+    <div class="group">
+      <h2>6 · Export</h2>
+      <div id="sizeRow" class="chips"></div>
+      <div class="row">
+        <button id="exportOne" type="button" class="primary">Export PNG</button>
+        <button id="exportAll" type="button">Export all 3 sizes</button>
+      </div>
+      <p id="status" role="status"></p>
+    </div>
+  </section>
+
+  <section class="preview" aria-label="Cover preview">
+    <canvas id="cover" aria-label="The cover"></canvas>
+    <p class="hint">Live preview — what you see is the PNG you get.</p>
+  </section>
+</main>
+
+<footer class="foot">
+  <p>Original lettering (Anton &amp; Pacifico, SIL Open Font License) and original art — no Rockstar Games logo, artwork or fonts. Works with the network off.</p>
+</footer>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
