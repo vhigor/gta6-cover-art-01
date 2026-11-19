@@ -1,18 +1,16 @@
-// Vice Coast Cover Studio — the cover renderer (improvement pass, Nov 2026).
+// Vice Coast Cover Studio — v2 cover renderer.
 //
-// Every cover is drawn on a 2D canvas from one state object: a layout of
-// photo panels, a colour grade, a title in Anton, a subtitle in Pacifico,
-// a star meter, grain and a vignette. The same drawCover() paints the live
-// preview (small canvas) and the exported PNG (full-size offscreen canvas),
-// so what you see is what you get.
+// A cover is one canvas painting driven by a state object: a layout of
+// photo panels, a gradient-map colour grade, a title in Anton, a subtitle
+// in Pacifico, a star meter, film grain and a vignette. drawCover() paints
+// the live preview and the exported PNG alike, so the editor shows exactly
+// what the file will contain.
 //
-// Layouts: seven. The newest, Diagonal Split, shears each panel row in
-// opposite directions, so the seams between panels run diagonally across
-// the poster like a torn-paper collage. Grades: seven gradient maps.
-// Sizes: four export sizes, square through story.
-// Panels: each one carries its own photo, zoom, pan and colour adjust
-// (brightness / contrast / saturation), applied with ctx.filter at draw
-// time and baked into the tile before the grade runs.
+// Seven layouts, seven grades, four export sizes. Panels carry their own
+// photo, zoom, pan and colour adjust (brightness / contrast / saturation),
+// which the renderer bakes into each tile before the grade runs. Presets
+// bundle a whole look — layout, grade, caption, stars and per-panel
+// adjust — into one click; see PRESETS below.
 
 export const LAYOUTS = {
   quad: { name: 'Quad Grid', panels: 4 },
@@ -69,52 +67,88 @@ export const SIZES = {
   story: { name: 'Story 1080 × 1920', w: 1080, h: 1920 },
 };
 
-/** Panel rectangles for a layout, as fractions of the canvas (x, y, w, h).
- *  `rot` rotates a panel (tilted polaroids); `skew` shears it, so the panel
- *  is drawn as a parallelogram and the seams run diagonally. */
+// One-click looks. `photos` is the photo slot each panel shows (0 or 1,
+// alternating for multi-panel layouts); `adjust` is the colour adjust
+// applied to every panel of the preset.
+export const PRESETS = {
+  viceSunset: {
+    name: 'Vice Sunset', layout: 'hero', grade: 'sunset',
+    title: 'Neon Coast', subtitle: 'a vice coast story', stars: 4,
+    adjust: { bright: 1.05, contrast: 1.1, sat: 1.2 },
+    photos: [0, 1, 0, 1],
+  },
+  neonNight: {
+    name: 'Neon Night', layout: 'diagonal', grade: 'neon',
+    title: 'Midnight Vice', subtitle: 'neon nights', stars: 5,
+    adjust: { bright: 0.95, contrast: 1.15, sat: 1.35 },
+    photos: [1, 0, 1, 0],
+  },
+  goldenHour: {
+    name: 'Golden Hour', layout: 'duo', grade: 'gold',
+    title: 'Golden Hour', subtitle: 'last light on the coast', stars: 4,
+    adjust: { bright: 1.1, contrast: 1.05, sat: 1.1 },
+    photos: [0, 0, 1, 1],
+  },
+};
+
+/** A panel rectangle, in fractions of the canvas. `rot` spins a panel
+ *  (tilted polaroids); `skew` shears it, so the panel becomes a
+ *  parallelogram and the seams between panels run diagonally. */
+function R(x, y, w, h, extra = {}) {
+  return { x, y, w, h, ...extra };
+}
+
+const TITLE_BAND_H = 0.22; // title band height, as a fraction of h
+
+/** Panel rectangles for a layout, as fractions of the canvas. */
 export function layoutPanels(layout, w, h) {
-  const band = 0.22; // title band height, as a fraction of h
-  const artH = 1 - band;
+  const artH = 1 - TITLE_BAND_H;
+  const half = artH / 2;
+  const gutter = 0.02;
+  const inner = 0.47;
   switch (layout) {
     case 'quad':
       return [
-        { x: 0.02, y: 0.02, w: 0.47, h: artH / 2 - 0.03, rot: 0 },
-        { x: 0.51, y: 0.02, w: 0.47, h: artH / 2 - 0.03, rot: 0 },
-        { x: 0.02, y: artH / 2, w: 0.47, h: artH / 2 - 0.03, rot: 0 },
-        { x: 0.51, y: artH / 2, w: 0.47, h: artH / 2 - 0.03, rot: 0 },
+        R(gutter, gutter, inner, half - 0.03),
+        R(0.51, gutter, inner, half - 0.03),
+        R(gutter, half, inner, half - 0.03),
+        R(0.51, half, inner, half - 0.03),
       ];
-    case 'hero':
+    case 'hero': {
+      const colH = artH - 0.04;
+      const cell = colH / 3;
       return [
-        { x: 0.02, y: 0.02, w: 0.62, h: artH - 0.04, rot: 0 },
-        { x: 0.66, y: 0.02, w: 0.32, h: (artH - 0.04) / 3 - 0.01, rot: 0 },
-        { x: 0.66, y: 0.02 + (artH - 0.04) / 3, w: 0.32, h: (artH - 0.04) / 3 - 0.01, rot: 0 },
-        { x: 0.66, y: 0.02 + ((artH - 0.04) / 3) * 2, w: 0.32, h: (artH - 0.04) / 3 - 0.01, rot: 0 },
+        R(gutter, gutter, 0.62, colH),
+        R(0.66, gutter, 0.32, cell - 0.01),
+        R(0.66, gutter + cell, 0.32, cell - 0.01),
+        R(0.66, gutter + cell * 2, 0.32, cell - 0.01),
       ];
+    }
     case 'fullbleed':
-      return [{ x: 0, y: 0, w: 1, h: 1, rot: 0 }];
+      return [R(0, 0, 1, 1)];
     case 'nine': {
       const cw = 0.96 / 3;
       const ch = (artH - 0.04) / 3;
       const cells = [];
-      for (let r = 0; r < 3; r++) {
-        for (let c = 0; c < 3; c++) {
-          if (r === 1 && c === 1) continue; // centre cell is the title block
-          cells.push({ x: 0.02 + c * cw, y: 0.02 + r * ch, w: cw - 0.01, h: ch - 0.01, rot: 0 });
+      for (let row = 0; row < 3; row++) {
+        for (let col = 0; col < 3; col++) {
+          if (row === 1 && col === 1) continue; // centre cell is the title block
+          cells.push(R(gutter + col * cw, gutter + row * ch, cw - 0.01, ch - 0.01));
         }
       }
       return cells;
     }
     case 'tilted':
       return [
-        { x: 0.06, y: 0.16, w: 0.40, h: 0.32, rot: -0.10 },
-        { x: 0.54, y: 0.13, w: 0.40, h: 0.32, rot: 0.07 },
-        { x: 0.08, y: 0.54, w: 0.40, h: 0.32, rot: 0.06 },
-        { x: 0.54, y: 0.51, w: 0.40, h: 0.32, rot: -0.08 },
+        R(0.06, 0.16, 0.40, 0.32, { rot: -0.10 }),
+        R(0.54, 0.13, 0.40, 0.32, { rot: 0.07 }),
+        R(0.08, 0.54, 0.40, 0.32, { rot: 0.06 }),
+        R(0.54, 0.51, 0.40, 0.32, { rot: -0.08 }),
       ];
     case 'duo':
       return [
-        { x: 0.02, y: 0.02, w: 0.47, h: artH - 0.04, rot: 0 },
-        { x: 0.51, y: 0.02, w: 0.47, h: artH - 0.04, rot: 0 },
+        R(gutter, gutter, inner, artH - 0.04),
+        R(0.51, gutter, inner, artH - 0.04),
       ];
     case 'diagonal': {
       // Two rows sheared in opposite directions: the top row leans right,
@@ -125,10 +159,10 @@ export function layoutPanels(layout, w, h) {
       const rowH = 0.35;
       const shear = 0.10;
       return [
-        { x: 0.02, y: 0.02, w: 0.47, h: rowH, skew: shear },
-        { x: 0.51, y: 0.02, w: 0.40, h: rowH, skew: shear },
-        { x: 0.07, y: 0.40, w: 0.44, h: rowH, skew: -shear },
-        { x: 0.53, y: 0.40, w: 0.40, h: rowH, skew: -shear },
+        R(gutter, gutter, inner, rowH, { skew: shear }),
+        R(0.51, gutter, 0.40, rowH, { skew: shear }),
+        R(0.07, 0.40, 0.44, rowH, { skew: -shear }),
+        R(0.53, 0.40, 0.40, rowH, { skew: -shear }),
       ];
     }
     default:
@@ -138,38 +172,34 @@ export function layoutPanels(layout, w, h) {
 
 /** Title band rectangle, as fractions of the canvas. */
 export function titleBand(layout) {
-  if (layout === 'fullbleed') return { x: 0, y: 0.66, w: 1, h: 0.34 };
-  if (layout === 'tilted') return { x: 0, y: 0.0, w: 1, h: 0.14 };
-  if (layout === 'nine') return { x: 0.34, y: 0.28, w: 0.32, h: 0.22 };
-  return { x: 0, y: 0.78, w: 1, h: 0.22 };
+  if (layout === 'fullbleed') return R(0, 0.66, 1, 0.34);
+  if (layout === 'tilted') return R(0, 0, 1, 0.14);
+  if (layout === 'nine') return R(0.34, 0.28, 0.32, 0.22);
+  return R(0, 0.78, 1, TITLE_BAND_H);
 }
+
+// --- gradient-map grades -----------------------------------------------------
 
 const lutCache = new Map();
 
-/** Builds a 256-entry gradient-map lookup for a grade: luminance -> [r, g, b]. */
+/** Linear mix of two RGB triples. */
+function mix3(a, b, t) {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+/** A 256-entry gradient-map lookup for a grade: luminance -> [r, g, b]. */
 function gradeLut(grade) {
-  if (lutCache.has(grade.name)) return lutCache.get(grade.name);
+  const hit = lutCache.get(grade.name);
+  if (hit) return hit;
   const lut = new Uint8Array(256 * 3);
   for (let i = 0; i < 256; i++) {
     const t = i / 255;
-    const a = grade.shadows;
-    const b = grade.midtones;
-    const c = grade.highlights;
-    let r, g, bl;
-    if (t < 0.5) {
-      const k = t * 2;
-      r = a[0] + (b[0] - a[0]) * k;
-      g = a[1] + (b[1] - a[1]) * k;
-      bl = a[2] + (b[2] - a[2]) * k;
-    } else {
-      const k = (t - 0.5) * 2;
-      r = b[0] + (c[0] - b[0]) * k;
-      g = b[1] + (c[1] - b[1]) * k;
-      bl = b[2] + (c[2] - b[2]) * k;
-    }
-    lut[i * 3] = r;
-    lut[i * 3 + 1] = g;
-    lut[i * 3 + 2] = bl;
+    const rgb = t < 0.5
+      ? mix3(grade.shadows, grade.midtones, t * 2)
+      : mix3(grade.midtones, grade.highlights, (t - 0.5) * 2);
+    lut[i * 3] = rgb[0];
+    lut[i * 3 + 1] = rgb[1];
+    lut[i * 3 + 2] = rgb[2];
   }
   lutCache.set(grade.name, lut);
   return lut;
@@ -179,18 +209,20 @@ function gradeLut(grade) {
 function applyGrade(ctx, x, y, w, h, grade) {
   if (w < 2 || h < 2) return;
   const lut = gradeLut(grade);
-  const s = grade.strength;
+  const strength = grade.strength;
   const img = ctx.getImageData(x, y, w, h);
   const d = img.data;
   for (let i = 0; i < d.length; i += 4) {
     const lum = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
     const o = lum * 3;
-    d[i] = d[i] + (lut[o] - d[i]) * s;
-    d[i + 1] = d[i + 1] + (lut[o + 1] - d[i + 1]) * s;
-    d[i + 2] = d[i + 2] + (lut[o + 2] - d[i + 2]) * s;
+    d[i] += (lut[o] - d[i]) * strength;
+    d[i + 1] += (lut[o + 1] - d[i + 1]) * strength;
+    d[i + 2] += (lut[o + 2] - d[i + 2]) * strength;
   }
   ctx.putImageData(img, x, y);
 }
+
+// --- per-panel photos ----------------------------------------------------------
 
 /** The canvas filter string for a panel's adjust sliders. Defaults are 1,
  *  which renders exactly as before — the filter is skipped entirely then. */
@@ -212,28 +244,44 @@ function drawPhotoInto(ctx, photo, rect, panel) {
   const scale = Math.max(w / iw, h / ih) * (panel?.zoom ?? 1);
   const pw = iw * scale;
   const ph = ih * scale;
-  const maxOx = Math.max(0, (pw - w) / 2) / w;
-  const maxOy = Math.max(0, (ph - h) / 2) / h;
-  const ox = Math.max(-maxOx, Math.min(maxOx, panel?.ox ?? 0)) * w;
-  const oy = Math.max(-maxOy, Math.min(maxOy, panel?.oy ?? 0)) * h;
+  const slackX = Math.max(0, (pw - w) / 2) / w;
+  const slackY = Math.max(0, (ph - h) / 2) / h;
+  const ox = Math.max(-slackX, Math.min(slackX, panel?.ox ?? 0)) * w;
+  const oy = Math.max(-slackY, Math.min(slackY, panel?.oy ?? 0)) * h;
   const filter = adjustFilter(panel);
   if (filter) ctx.filter = filter;
   ctx.drawImage(photo, x + (w - pw) / 2 + ox, y + (h - ph) / 2 + oy, pw, ph);
   if (filter) ctx.filter = 'none';
 }
 
-let noiseCanvas = null;
+// --- texture helpers -----------------------------------------------------------
+
+let noiseTile = null;
+
+/** A tiny deterministic RNG (mulberry32) so the grain tile is identical
+ *  on every load: the same cover state always renders the same pixels,
+ *  which is what makes a seeded "Surprise me" replayable exactly. */
+function seededRng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 /** A tileable film-grain pattern, built once. */
 function grainPattern(ctx) {
-  if (!noiseCanvas) {
-    noiseCanvas = document.createElement('canvas');
-    noiseCanvas.width = 160;
-    noiseCanvas.height = 160;
-    const nctx = noiseCanvas.getContext('2d');
+  if (!noiseTile) {
+    noiseTile = document.createElement('canvas');
+    noiseTile.width = 160;
+    noiseTile.height = 160;
+    const nctx = noiseTile.getContext('2d');
     const img = nctx.createImageData(160, 160);
+    const rng = seededRng(1337);
     for (let i = 0; i < img.data.length; i += 4) {
-      const v = 110 + ((Math.random() * 90) | 0);
+      const v = 110 + ((rng() * 90) | 0);
       img.data[i] = v;
       img.data[i + 1] = v;
       img.data[i + 2] = v;
@@ -241,7 +289,7 @@ function grainPattern(ctx) {
     }
     nctx.putImageData(img, 0, 0);
   }
-  return ctx.createPattern(noiseCanvas, 'repeat');
+  return ctx.createPattern(noiseTile, 'repeat');
 }
 
 /** Draws a five-point star path at (cx, cy) with radius r. */
@@ -275,14 +323,16 @@ function halftoneDots(ctx, x, y, w, h, colour) {
   ctx.restore();
 }
 
-/** Draws the title, subtitle and star meter inside the title band. */
-function drawTitleBlock(ctx, state, w, h) {
+// --- title block ----------------------------------------------------------------
+
+/** Paints the title band: its fill, the title, subtitle and star meter. */
+function paintTitle(ctx, state, w, h) {
   const band = titleBand(state.layout);
   const bx = band.x * w;
   const by = band.y * h;
   const bw = band.w * w;
   const bh = band.h * h;
-  const centre = state.layout === 'nine';
+  const centred = state.layout === 'nine';
   const title = (state.title || 'UNTITLED').trim().toUpperCase();
   const subtitle = (state.subtitle || '').trim();
 
@@ -295,7 +345,7 @@ function drawTitleBlock(ctx, state, w, h) {
     ctx.fillRect(bx, by, bw, bh);
   } else if (state.layout === 'tilted') {
     // Title rides on the sunset sky, no band fill.
-  } else if (centre) {
+  } else if (centred) {
     ctx.fillStyle = '#12081f';
     ctx.fillRect(bx, by, bw, bh);
     ctx.strokeStyle = '#ffffff';
@@ -330,8 +380,8 @@ function drawTitleBlock(ctx, state, w, h) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  const titleSize = centre ? Math.min(bw * 0.16, bh * 0.30) : Math.min(bw * 0.085, bh * 0.42);
-  let size = titleSize;
+  const baseSize = centred ? Math.min(bw * 0.16, bh * 0.30) : Math.min(bw * 0.085, bh * 0.42);
+  let size = baseSize;
   ctx.font = `${size}px Anton, 'Arial Narrow', sans-serif`;
   try {
     ctx.letterSpacing = `${Math.max(1, size * 0.04)}px`;
@@ -340,7 +390,7 @@ function drawTitleBlock(ctx, state, w, h) {
     size -= 2;
     ctx.font = `${size}px Anton, 'Arial Narrow', sans-serif`;
   }
-  const subSize = centre ? Math.min(bw * 0.09, bh * 0.16) : Math.min(bw * 0.032, bh * 0.16);
+  const subSize = centred ? Math.min(bw * 0.09, bh * 0.16) : Math.min(bw * 0.032, bh * 0.16);
   const titleY = subtitle ? -bh * 0.16 : 0;
   ctx.lineJoin = 'round';
   ctx.strokeStyle = '#1a0b2e';
@@ -364,20 +414,21 @@ function drawTitleBlock(ctx, state, w, h) {
     ctx.shadowBlur = 0;
   }
 
-  if (state.stars > 0 && !centre) {
+  if (state.stars > 0 && !centred) {
     const r = Math.min(bw * 0.016, bh * 0.09);
     const gap = r * 2.6;
     const total = gap * 4;
     const sy = titleY + size * 0.62 + subSize * 1.35;
     for (let i = 0; i < 5; i++) {
-      const sx = -total / 2 + i * gap;
-      starPath(ctx, sx, sy, r);
+      starPath(ctx, -total / 2 + i * gap, sy, r);
       ctx.fillStyle = i < state.stars ? '#ffd166' : 'rgba(255, 255, 255, 0.25)';
       ctx.fill();
     }
   }
   ctx.restore();
 }
+
+// --- panel placement ---------------------------------------------------------------
 
 /** Paints one panel tile (photo + grade, or the empty placeholder) onto
  *  an offscreen canvas the size of the panel, then places it on the main
@@ -419,22 +470,12 @@ function placeTile(ctx, tile, frac, px, py, pw, ph, w, h) {
   ctx.restore();
 }
 
-/**
- * Draws the whole cover onto `canvas` (any size) from `state`:
- *   state = { layout, grade, title, subtitle, stars, grain, photos[], panels[] }
- * photos are Image elements (or null); panels are
- * { photo, zoom, ox, oy, bright, contrast, sat }.
- */
-export function drawCover(canvas, state) {
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width;
-  const h = canvas.height;
-  const grade = GRADES[state.grade] ?? GRADES.sunset;
-  const rects = layoutPanels(state.layout, w, h);
+// --- whole cover ---------------------------------------------------------------------
 
-  // Backdrop: deep violet; a sunset sky for the tilted layout, and a
-  // diagonal sunset wash behind the diagonal split.
-  if (state.layout === 'tilted') {
+/** Backdrop behind the panels: deep violet, a sunset sky for the tilted
+ *  layout, and a diagonal sunset wash behind the diagonal split. */
+function paintBackdrop(ctx, layout, w, h) {
+  if (layout === 'tilted') {
     const sky = ctx.createLinearGradient(0, 0, 0, h);
     sky.addColorStop(0, '#2a0e3f');
     sky.addColorStop(0.45, '#ff2e88');
@@ -446,7 +487,7 @@ export function drawCover(canvas, state) {
     ctx.beginPath();
     ctx.arc(w * 0.5, h * 0.42, w * 0.16, 0, Math.PI * 2);
     ctx.fill();
-  } else if (state.layout === 'diagonal') {
+  } else if (layout === 'diagonal') {
     const wash = ctx.createLinearGradient(0, 0, w, h);
     wash.addColorStop(0, '#1a0b2e');
     wash.addColorStop(0.5, '#7a1e5c');
@@ -457,8 +498,12 @@ export function drawCover(canvas, state) {
     ctx.fillStyle = '#12081f';
     ctx.fillRect(0, 0, w, h);
   }
+}
 
-  // Panels: each photo is adjusted and graded on its own tile, then placed.
+/** Paints every panel: each photo is adjusted and graded on its own tile,
+ *  then the tile is placed on the main canvas. */
+function paintPanels(ctx, state, w, h, grade) {
+  const rects = layoutPanels(state.layout, w, h);
   rects.forEach((frac, i) => {
     const panel = state.panels[i] ?? { photo: -1, zoom: 1, ox: 0, oy: 0, bright: 1, contrast: 1, sat: 1 };
     const px = Math.round(frac.x * w);
@@ -493,10 +538,10 @@ export function drawCover(canvas, state) {
 
     placeTile(ctx, tile, frac, px, py, pw, ph, w, h);
   });
+}
 
-  drawTitleBlock(ctx, state, w, h);
-
-  // Film grain and vignette over the whole cover.
+/** Film grain and vignette over the whole cover. */
+function paintFinish(ctx, state, w, h) {
   if (state.grain) {
     ctx.save();
     ctx.globalAlpha = 0.07;
@@ -513,4 +558,21 @@ export function drawCover(canvas, state) {
   vig.addColorStop(1, 'rgba(0, 0, 0, 0.38)');
   ctx.fillStyle = vig;
   ctx.fillRect(0, 0, w, h);
+}
+
+/**
+ * Draws the whole cover onto `canvas` (any size) from `state`:
+ *   state = { layout, grade, title, subtitle, stars, grain, photos[], panels[] }
+ * photos are Image elements (or null); panels are
+ * { photo, zoom, ox, oy, bright, contrast, sat }.
+ */
+export function drawCover(canvas, state) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  const grade = GRADES[state.grade] ?? GRADES.sunset;
+  paintBackdrop(ctx, state.layout, w, h);
+  paintPanels(ctx, state, w, h, grade);
+  paintTitle(ctx, state, w, h);
+  paintFinish(ctx, state, w, h);
 }

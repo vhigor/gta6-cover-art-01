@@ -1,12 +1,13 @@
-// Vice Coast Cover Studio — wires the editor: photos, panels, layout,
-// grade, caption, per-panel colour adjust, export and undo/redo. The
-// preview canvas and the exported PNG are both painted by drawCover() in
-// ./cover.js, so what you see is what you get.
+// Vice Coast Cover Studio v2 — the editor: photos, panels, layout,
+// grade, caption, per-panel colour adjust, presets, randomize, export
+// and undo/redo. The preview canvas and the exported PNG are both painted
+// by drawCover() in ./cover.js, so what you see is what you get.
 //
-// Keyboard: 1–7 switches layout, [ and ] cycle layouts, Ctrl+Z undoes,
-// Ctrl+Shift+Z / Ctrl+Y redoes. Shortcuts never fire while you type in a
-// text field. The editor also works at narrow widths (see style.css).
-import { drawCover, layoutPanels, titleBand, LAYOUTS, GRADES, SIZES } from './cover.js';
+// Keyboard: 1–7 switches layout, [ and ] cycle layouts, R randomizes the
+// whole cover, Ctrl+Z undoes, Ctrl+Shift+Z / Ctrl+Y redoes. Shortcuts
+// never fire while you type in a text field. The editor also works at
+// narrow widths (see style.css).
+import { drawCover, layoutPanels, LAYOUTS, GRADES, SIZES, PRESETS } from './cover.js';
 import { runShot } from './shots.js';
 
 const $ = (id) => document.getElementById(id);
@@ -15,14 +16,24 @@ const statusEl = $('status');
 
 const PREVIEW_MAX = 720; // preview canvas long side, in pixels
 const LAYOUT_KEYS = Object.keys(LAYOUTS);
+const PRESET_KEYS = Object.keys(PRESETS);
+const GRADE_KEYS = Object.keys(GRADES);
+const SURPRISE_TITLES = [
+  ['Neon Coast', 'a vice coast story'],
+  ['Midnight Vice', 'neon nights'],
+  ['Golden Hour', 'last light on the coast'],
+  ['Vice City Nights', 'drive fast, live loud'],
+  ['Sunset Strip', 'two stars, one coast'],
+  ['Palm & Chrome', 'a leonida postcard'],
+];
 
 /** A fresh panel: which photo it shows, its zoom, pan and colour adjust. */
-function freshPanel(photo = 0) {
+function newPanel(photo = 0) {
   return { photo, zoom: 1, ox: 0, oy: 0, bright: 1, contrast: 1, sat: 1 };
 }
 
 /** Fills in any missing panel field (older snapshots, shot patches). */
-function normalizePanel(p, fallbackPhoto = 0) {
+function completePanel(p, fallbackPhoto = 0) {
   return {
     photo: p?.photo ?? fallbackPhoto,
     zoom: p?.zoom ?? 1,
@@ -34,6 +45,20 @@ function normalizePanel(p, fallbackPhoto = 0) {
   };
 }
 
+/** A tiny deterministic RNG (mulberry32) so a "surprise" can be replayed
+ *  exactly in a screenshot scene; the editor itself uses Math.random. */
+function makeRng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const pick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
+
 const state = {
   layout: 'quad',
   grade: 'sunset',
@@ -44,16 +69,16 @@ const state = {
   size: 'portrait',
   photos: [null, null, null, null], // Image elements, or null
   photoNames: ['', '', '', ''],
-  panels: [freshPanel(0), freshPanel(0), freshPanel(0), freshPanel(0)],
+  panels: [newPanel(0), newPanel(0), newPanel(0), newPanel(0)],
   selected: 0,
 };
 
-// --- history (undo / redo) -------------------------------------------------
+// --- history (undo / redo) ---------------------------------------------------
 
 const history = [];
 let historyIndex = -1;
 
-function snapshot() {
+function takeSnapshot() {
   return JSON.stringify({
     layout: state.layout,
     grade: state.grade,
@@ -67,40 +92,40 @@ function snapshot() {
   });
 }
 
-function restore(json) {
+function applySnapshot(json) {
   const s = JSON.parse(json);
   Object.assign(state, s);
-  state.panels = state.panels.map((p) => normalizePanel(p));
-  syncControls();
-  redraw();
+  state.panels = state.panels.map((p) => completePanel(p));
+  syncAll();
+  paint();
 }
 
-function pushHistory() {
+function commit() {
   history.length = historyIndex + 1;
-  history.push(snapshot());
+  history.push(takeSnapshot());
   if (history.length > 60) history.shift();
   historyIndex = history.length - 1;
   $('undo').disabled = historyIndex <= 0;
   $('redo').disabled = true;
 }
 
-function undo() {
+function goBack() {
   if (historyIndex <= 0) return;
   historyIndex -= 1;
-  restore(history[historyIndex]);
+  applySnapshot(history[historyIndex]);
   $('undo').disabled = historyIndex <= 0;
   $('redo').disabled = false;
 }
 
-function redo() {
+function goForward() {
   if (historyIndex >= history.length - 1) return;
   historyIndex += 1;
-  restore(history[historyIndex]);
+  applySnapshot(history[historyIndex]);
   $('undo').disabled = false;
   $('redo').disabled = historyIndex >= history.length - 1;
 }
 
-// --- rendering ---------------------------------------------------------------
+// --- painting ------------------------------------------------------------------
 
 function previewSize() {
   const size = SIZES[state.size];
@@ -108,7 +133,7 @@ function previewSize() {
   return { w: Math.round(size.w * scale), h: Math.round(size.h * scale) };
 }
 
-function redraw() {
+function paint() {
   const { w, h } = previewSize();
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
@@ -117,12 +142,12 @@ function redraw() {
   drawCover(canvas, state);
   // The pink selection outline is editor chrome: never draw it on the
   // full-frame cover scene used for screenshots.
-  if (!document.body.classList.contains('shot-cover')) drawSelection();
+  if (!document.body.classList.contains('shot-cover')) outlineSelected();
   $('panelLabel').textContent = `Panel ${state.selected + 1} of ${panelCount()}`;
 }
 
 /** Draws the pink selection outline around the selected panel. */
-function drawSelection() {
+function outlineSelected() {
   const { w, h } = previewSize();
   const rects = layoutPanels(state.layout, w, h);
   const frac = rects[state.selected];
@@ -144,31 +169,89 @@ function refitPanels() {
   const n = panelCount();
   const next = [];
   for (let i = 0; i < n; i++) {
-    next.push(state.panels[i] ? normalizePanel(state.panels[i]) : freshPanel(i % filledPhotoCount()));
+    next.push(state.panels[i] ? completePanel(state.panels[i]) : newPanel(i % filledPhotos()));
   }
   state.panels = next;
   state.selected = Math.min(state.selected, n - 1);
 }
 
-function filledPhotoCount() {
+function filledPhotos() {
   return Math.max(1, state.photos.filter(Boolean).length);
 }
 
 /** Switches to a layout by key, refitting panels and recording history. */
-function pickLayout(key) {
+function chooseLayout(key) {
   if (!LAYOUTS[key] || key === state.layout) return;
   state.layout = key;
   refitPanels();
-  pushHistory();
-  syncControls();
-  redraw();
+  commit();
+  syncAll();
+  paint();
 }
 
 /** Steps the layout forward (+1) or back (-1) through the picker order. */
-function cycleLayout(dir) {
+function stepLayout(dir) {
   const i = LAYOUT_KEYS.indexOf(state.layout);
   const next = LAYOUT_KEYS[(i + dir + LAYOUT_KEYS.length) % LAYOUT_KEYS.length];
-  pickLayout(next);
+  chooseLayout(next);
+}
+
+// --- presets & surprise ---------------------------------------------------------
+
+/** Applies one of the named presets: layout, grade, caption, stars, the
+ *  preset's per-panel adjust and its photo pattern. */
+function applyPreset(key) {
+  const preset = PRESETS[key];
+  if (!preset) return;
+  state.layout = preset.layout;
+  state.grade = preset.grade;
+  state.title = preset.title;
+  state.subtitle = preset.subtitle;
+  state.stars = preset.stars;
+  refitPanels();
+  state.panels.forEach((p, i) => {
+    const slot = preset.photos[i % preset.photos.length] % filledPhotos();
+    p.photo = slot;
+    p.zoom = 1;
+    p.ox = 0;
+    p.oy = 0;
+    p.bright = preset.adjust.bright;
+    p.contrast = preset.adjust.contrast;
+    p.sat = preset.adjust.sat;
+  });
+  commit();
+  syncAll();
+  paint();
+  statusEl.textContent = `Preset “${preset.name}” applied — ${LAYOUTS[preset.layout].name} · ${GRADES[preset.grade].name}.`;
+}
+
+/** Randomizes the whole cover: layout, grade, caption, stars, adjust and
+ *  the photo pattern. `rng` defaults to Math.random; a seeded RNG makes
+ *  the surprise replayable (screenshot scenes use one). */
+function surpriseMe(rng = Math.random) {
+  const [title, subtitle] = pick(rng, SURPRISE_TITLES);
+  state.layout = pick(rng, LAYOUT_KEYS);
+  state.grade = pick(rng, GRADE_KEYS);
+  state.title = title;
+  state.subtitle = subtitle;
+  state.stars = 3 + Math.floor(rng() * 3);
+  const bright = 0.9 + rng() * 0.25;
+  const contrast = 0.95 + rng() * 0.25;
+  const sat = 1 + rng() * 0.45;
+  refitPanels();
+  state.panels.forEach((p) => {
+    p.photo = Math.floor(rng() * filledPhotos());
+    p.zoom = 1 + rng() * 0.3;
+    p.ox = (rng() - 0.5) * 0.16;
+    p.oy = (rng() - 0.5) * 0.12;
+    p.bright = bright;
+    p.contrast = contrast;
+    p.sat = sat;
+  });
+  commit();
+  syncAll();
+  paint();
+  statusEl.textContent = `Surprise! ${LAYOUTS[state.layout].name} · ${GRADES[state.grade].name} · “${title}”. Press R again for another.`;
 }
 
 // --- photos ------------------------------------------------------------------
@@ -183,7 +266,7 @@ export function loadImage(url) {
   });
 }
 
-async function setPhotoSlot(slot, file) {
+async function assignSlot(slot, file) {
   const url = URL.createObjectURL(file);
   const img = await loadImage(url);
   state.photos[slot] = img;
@@ -192,11 +275,11 @@ async function setPhotoSlot(slot, file) {
   state.panels.forEach((p) => {
     if (p.photo < 0) p.photo = slot;
   });
-  renderPhotoSlots();
-  redraw();
+  drawSlots();
+  paint();
 }
 
-function renderPhotoSlots() {
+function drawSlots() {
   const wrap = $('photoSlots');
   wrap.innerHTML = '';
   state.photos.forEach((img, i) => {
@@ -224,7 +307,7 @@ function renderPhotoSlots() {
       input.type = 'file';
       input.accept = 'image/*';
       input.onchange = () => {
-        if (input.files[0]) setPhotoSlot(i, input.files[0]);
+        if (input.files[0]) assignSlot(i, input.files[0]);
       };
       input.click();
     });
@@ -233,7 +316,7 @@ function renderPhotoSlots() {
 }
 
 /** Loads a bundled sample photo into slot 0 and fills every panel with it. */
-async function loadSample(name) {
+async function useSample(name) {
   const img = await loadImage(`samples/${name}.jpg`);
   state.photos[0] = img;
   state.photoNames[0] = `${name}.jpg (sample)`;
@@ -246,16 +329,16 @@ async function loadSample(name) {
     p.contrast = 1;
     p.sat = 1;
   });
-  renderPhotoSlots();
-  pushHistory();
-  redraw();
+  drawSlots();
+  commit();
+  paint();
   statusEl.textContent = `Loaded sample photo ${name}.jpg — drag a panel to reposition it.`;
 }
 
 // --- export ------------------------------------------------------------------
 
 /** Renders the cover at full export size and returns a PNG blob. */
-async function renderExportBlob(sizeKey) {
+async function exportBlob(sizeKey) {
   const size = SIZES[sizeKey];
   const off = document.createElement('canvas');
   off.width = size.w;
@@ -265,7 +348,7 @@ async function renderExportBlob(sizeKey) {
   return new Promise((resolve) => off.toBlob(resolve, 'image/png'));
 }
 
-function downloadBlob(blob, filename) {
+function saveBlob(blob, filename) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = filename;
@@ -275,19 +358,23 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-async function exportOne(sizeKey) {
+function slugOf(title) {
+  return (title || 'cover').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'cover';
+}
+
+async function exportSize(sizeKey) {
   const size = SIZES[sizeKey];
   statusEl.textContent = `Rendering ${size.name}…`;
-  const blob = await renderExportBlob(sizeKey);
-  const slug = (state.title || 'cover').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'cover';
-  downloadBlob(blob, `${slug}-${size.w}x${size.h}.png`);
+  const blob = await exportBlob(sizeKey);
+  const slug = slugOf(state.title);
+  saveBlob(blob, `${slug}-${size.w}x${size.h}.png`);
   statusEl.textContent = `Saved ${slug}-${size.w}x${size.h}.png`;
 }
 
-async function exportAll() {
+async function exportEverySize() {
   const keys = Object.keys(SIZES);
   for (const key of keys) {
-    await exportOne(key);
+    await exportSize(key);
     await new Promise((r) => setTimeout(r, 350));
   }
   statusEl.textContent = `Saved all ${keys.length} sizes — square, portrait, wide and story.`;
@@ -295,7 +382,7 @@ async function exportAll() {
 
 // --- controls ----------------------------------------------------------------
 
-function buildButtons(container, entries, current, onPick) {
+function buildChips(container, entries, current, onPick) {
   const el = $(container);
   el.innerHTML = '';
   Object.entries(entries).forEach(([key, value]) => {
@@ -308,33 +395,49 @@ function buildButtons(container, entries, current, onPick) {
     }
     b.addEventListener('click', () => {
       onPick(key);
-      buildButtons(container, entries, key, onPick);
+      buildChips(container, entries, key, onPick);
     });
     el.appendChild(b);
   });
 }
 
-function syncControls() {
+function buildPresets() {
+  const el = $('presetRow');
+  el.innerHTML = '';
+  Object.entries(PRESETS).forEach(([key, preset]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'preset';
+    const grade = GRADES[preset.grade];
+    b.style.background = `linear-gradient(135deg, ${grade.swatch[0]} 0%, ${grade.swatch[1]} 55%, ${grade.swatch[2]} 100%)`;
+    b.innerHTML = `<span class="preset-name">${preset.name}</span><span class="preset-sub">${LAYOUTS[preset.layout].name} · ${grade.name}</span>`;
+    b.addEventListener('click', () => applyPreset(key));
+    el.appendChild(b);
+  });
+}
+
+function syncAll() {
   $('title').value = state.title;
   $('subtitle').value = state.subtitle;
   $('grainToggle').checked = state.grain;
-  buildButtons('layoutRow', LAYOUTS, state.layout, pickLayout);
-  buildButtons('gradeRow', GRADES, state.grade, (key) => {
+  buildChips('layoutRow', LAYOUTS, state.layout, chooseLayout);
+  buildChips('gradeRow', GRADES, state.grade, (key) => {
     state.grade = key;
-    pushHistory();
-    redraw();
+    commit();
+    paint();
   });
-  buildButtons('sizeRow', SIZES, state.size, (key) => {
+  buildChips('sizeRow', SIZES, state.size, (key) => {
     state.size = key;
-    pushHistory();
-    redraw();
+    commit();
+    paint();
   });
-  renderStars();
-  renderPhotoSlots();
-  renderPanelEditor();
+  buildPresets();
+  paintStars();
+  drawSlots();
+  paintPanelForm();
 }
 
-function renderStars() {
+function paintStars() {
   const wrap = $('starsRow');
   wrap.innerHTML = '';
   for (let i = 1; i <= 5; i++) {
@@ -345,9 +448,9 @@ function renderStars() {
     b.setAttribute('aria-label', `${i} star${i > 1 ? 's' : ''}`);
     b.addEventListener('click', () => {
       state.stars = i;
-      pushHistory();
-      renderStars();
-      redraw();
+      commit();
+      paintStars();
+      paint();
     });
     wrap.appendChild(b);
   }
@@ -360,7 +463,7 @@ const ADJUST = [
   { key: 'sat', input: 'panelSat', label: 'panelSatVal', min: 0, max: 2, format: (v) => `${v.toFixed(2)}×` },
 ];
 
-function renderPanelEditor() {
+function paintPanelForm() {
   const panel = state.panels[state.selected];
   if (!panel) return;
   const select = $('panelPhoto');
@@ -385,42 +488,42 @@ function renderPanelEditor() {
   }
 }
 
-function wire() {
+function attachHandlers() {
   $('title').addEventListener('input', (e) => {
     state.title = e.target.value;
-    redraw();
+    paint();
   });
-  $('title').addEventListener('change', pushHistory);
+  $('title').addEventListener('change', commit);
   $('subtitle').addEventListener('input', (e) => {
     state.subtitle = e.target.value;
-    redraw();
+    paint();
   });
-  $('subtitle').addEventListener('change', pushHistory);
+  $('subtitle').addEventListener('change', commit);
   $('grainToggle').addEventListener('change', (e) => {
     state.grain = e.target.checked;
-    pushHistory();
-    redraw();
+    commit();
+    paint();
   });
   $('panelPhoto').addEventListener('change', (e) => {
     state.panels[state.selected].photo = Number(e.target.value);
-    pushHistory();
-    redraw();
+    commit();
+    paint();
   });
   $('panelZoom').addEventListener('input', (e) => {
     state.panels[state.selected].zoom = Number(e.target.value);
     $('panelZoomVal').textContent = `${state.panels[state.selected].zoom.toFixed(2)}×`;
-    redraw();
+    paint();
   });
-  $('panelZoom').addEventListener('change', pushHistory);
+  $('panelZoom').addEventListener('change', commit);
   for (const a of ADJUST) {
     $(a.input).addEventListener('input', (e) => {
       const panel = state.panels[state.selected];
       if (!panel) return;
       panel[a.key] = Number(e.target.value);
       $(a.label).textContent = a.format(panel[a.key]);
-      redraw();
+      paint();
     });
-    $(a.input).addEventListener('change', pushHistory);
+    $(a.input).addEventListener('change', commit);
   }
   $('panelReset').addEventListener('click', () => {
     const p = state.panels[state.selected];
@@ -430,17 +533,17 @@ function wire() {
     p.bright = 1;
     p.contrast = 1;
     p.sat = 1;
-    pushHistory();
-    renderPanelEditor();
-    redraw();
+    commit();
+    paintPanelForm();
+    paint();
   });
   $('fillAll').addEventListener('click', () => {
     const photo = state.panels[state.selected].photo;
     state.panels.forEach((p) => {
       p.photo = photo;
     });
-    pushHistory();
-    redraw();
+    commit();
+    paint();
     statusEl.textContent = 'Every panel now shows the selected photo.';
   });
   $('addPhotos').addEventListener('click', () => {
@@ -453,43 +556,47 @@ function wire() {
       for (const file of files) {
         const slot = state.photos.findIndex((p) => !p);
         if (slot < 0) break;
-        await setPhotoSlot(slot, file);
+        await assignSlot(slot, file);
       }
-      pushHistory();
+      commit();
       statusEl.textContent = `Added ${files.length} photo${files.length > 1 ? 's' : ''}.`;
     };
     input.click();
   });
-  $('samplePier').addEventListener('click', () => loadSample('pier'));
-  $('sampleBoulevard').addEventListener('click', () => loadSample('boulevard'));
-  $('exportOne').addEventListener('click', () => exportOne(state.size));
-  $('exportAll').addEventListener('click', exportAll);
-  $('undo').addEventListener('click', undo);
-  $('redo').addEventListener('click', redo);
+  $('samplePier').addEventListener('click', () => useSample('pier'));
+  $('sampleBoulevard').addEventListener('click', () => useSample('boulevard'));
+  $('surpriseBtn').addEventListener('click', () => surpriseMe());
+  $('exportOne').addEventListener('click', () => exportSize(state.size));
+  $('exportAll').addEventListener('click', exportEverySize);
+  $('undo').addEventListener('click', goBack);
+  $('redo').addEventListener('click', goForward);
 
-  // Keyboard: digits switch layout, [ ] cycle it, Ctrl+Z / Ctrl+Shift+Z
-  // (or Ctrl+Y) undo and redo. Never while typing in a field.
+  // Keyboard: digits switch layout, [ ] cycle it, R randomizes, Ctrl+Z /
+  // Ctrl+Shift+Z (or Ctrl+Y) undo and redo. Never while typing in a field.
   document.addEventListener('keydown', (e) => {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
       e.preventDefault();
-      undo();
+      goBack();
     } else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
       e.preventDefault();
-      redo();
+      goForward();
     } else if (!e.ctrlKey && !e.metaKey && !e.altKey && /^[1-7]$/.test(e.key)) {
       const key = LAYOUT_KEYS[Number(e.key) - 1];
       if (key) {
         e.preventDefault();
-        pickLayout(key);
+        chooseLayout(key);
       }
     } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === '[') {
       e.preventDefault();
-      cycleLayout(-1);
+      stepLayout(-1);
     } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === ']') {
       e.preventDefault();
-      cycleLayout(1);
+      stepLayout(1);
+    } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'r') {
+      e.preventDefault();
+      surpriseMe();
     }
   });
 
@@ -503,8 +610,8 @@ function wire() {
     const hit = rects.findIndex((r) => fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h);
     if (hit < 0) return;
     state.selected = hit;
-    renderPanelEditor();
-    redraw();
+    paintPanelForm();
+    paint();
     drag = { panel: state.panels[hit], startX: e.clientX, startY: e.clientY, ox: state.panels[hit].ox, oy: state.panels[hit].oy, w: rect.width, h: rect.height, frac: rects[hit] };
     canvas.setPointerCapture(e.pointerId);
   });
@@ -514,11 +621,11 @@ function wire() {
     const dy = (e.clientY - drag.startY) / (drag.h * drag.frac.h);
     drag.panel.ox = Math.max(-1, Math.min(1, drag.ox + dx));
     drag.panel.oy = Math.max(-1, Math.min(1, drag.oy + dy));
-    redraw();
+    paint();
   });
   canvas.addEventListener('pointerup', () => {
     if (drag) {
-      pushHistory();
+      commit();
       drag = null;
     }
   });
@@ -527,28 +634,28 @@ function wire() {
     const p = state.panels[state.selected];
     if (!p) return;
     p.zoom = Math.max(1, Math.min(3, p.zoom * (e.deltaY < 0 ? 1.08 : 0.93)));
-    renderPanelEditor();
-    redraw();
+    paintPanelForm();
+    paint();
   }, { passive: false });
 }
 
 // --- boot ----------------------------------------------------------------------
 
 async function boot() {
-  wire();
-  syncControls();
-  pushHistory();
+  attachHandlers();
+  syncAll();
+  commit();
   try {
     await Promise.all([
       document.fonts.load('40px Anton'),
       document.fonts.load('40px Pacifico'),
     ]);
   } catch (e) { /* fall back to system fonts */ }
-  await loadSample('pier');
+  await useSample('pier');
   const query = new URLSearchParams(location.search);
   if (query.get('shot')) {
     runShot(query, {
-      loadSample,
+      loadSample: useSample,
       loadSecondSample: async (name) => {
         const img = await loadImage(`samples/${name}.jpg`);
         state.photos[1] = img;
@@ -564,8 +671,8 @@ async function boot() {
           p.contrast = 1;
           p.sat = 1;
         });
-        renderPhotoSlots();
-        redraw();
+        drawSlots();
+        paint();
       },
       applyAdjust: (adjust) => {
         // Sets the same colour adjust on every panel (shot scenes use it
@@ -575,16 +682,18 @@ async function boot() {
           if (adjust.contrast != null) p.contrast = adjust.contrast;
           if (adjust.sat != null) p.sat = adjust.sat;
         });
-        renderPanelEditor();
-        redraw();
+        paintPanelForm();
+        paint();
       },
+      applyPreset,
+      surpriseMe: (seed) => surpriseMe(makeRng(seed)),
       setState: (patch) => {
         Object.assign(state, patch);
         refitPanels();
-        syncControls();
-        redraw();
+        syncAll();
+        paint();
       },
-      redraw,
+      redraw: paint,
     });
   }
 }

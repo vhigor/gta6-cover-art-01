@@ -11,6 +11,13 @@ own static files**: photos never leave the machine, no upload, no watermark.
 
 ## What it does
 
+- **One-click presets** — Vice Sunset (Hero + Sunset), Neon Night
+  (Diagonal Split + Neon Vice) and Golden Hour (Duo + Golden Hour): each
+  applies a whole look — layout, grade, caption, star meter and per-panel
+  colour — in a single click.
+- **Surprise me** — a 🎲 button (or the `R` key) randomizes the whole
+  cover: layout, grade, caption, stars, colour adjust and the photo
+  arrangement. Press it again for another roll.
 - **7 layouts** — Quad Grid, Hero + Three, Full Bleed, Nine Grid (title
   block in the centre), Tilted Snaps (polaroid-style, on a sunset sky),
   Duo, and Diagonal Split, where the two panel rows shear in opposite
@@ -28,8 +35,8 @@ own static files**: photos never leave the machine, no upload, no watermark.
 - **Fast and easy** — photo to PNG in a few clicks: export the current size
   or **all four sizes at once** (1080 × 1080, 1080 × 1350, 1920 × 1080 and
   the 1080 × 1920 story size).
-- **Keyboard** — `1`–`7` switch layouts, `[` and `]` cycle them,
-  `Ctrl+Z` / `Ctrl+Y` undo and redo.
+- **Keyboard** — `1`–`7` switch layouts, `[` and `]` cycle them, `R`
+  randomizes, `Ctrl+Z` / `Ctrl+Y` undo and redo.
 - **Polish** — film grain, vignette, inked panel edges, undo / redo, a
   responsive editor that stays usable at narrow widths, and two bundled
   sample photos to try it instantly.
@@ -50,7 +57,8 @@ Font License — see `app/fonts/OFL-*.txt`) and sample photos live under
 `main.ts` (Node 22, standard library only) copies `app/` and `screenshots/`
 to `/output` and writes `/output/dossier.json` with the kit's
 `vendor/makefun-app.ts`. It also checks the four screenshots against the
-gate caps (at most 256 KiB each) before writing the dossier:
+gate caps (at most 256 KiB each) and the app's entrypoint files before
+writing the dossier:
 
 ```sh
 mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts

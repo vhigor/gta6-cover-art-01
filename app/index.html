@@ -36,19 +36,28 @@
     </div>
 
     <div class="group">
-      <h2>2 · Layout</h2>
+      <h2>2 · Presets</h2>
+      <div id="presetRow" class="presets"></div>
+      <div class="row">
+        <button id="surpriseBtn" type="button" class="surprise">🎲 Surprise me</button>
+      </div>
+      <p class="hint">A preset applies a whole look — layout, grade, caption and colour — in one click. Or roll the dice: <kbd>R</kbd> randomizes the cover.</p>
+    </div>
+
+    <div class="group">
+      <h2>3 · Layout</h2>
       <div id="layoutRow" class="chips"></div>
       <p class="hint">Shortcuts: <kbd>1</kbd>–<kbd>7</kbd> pick a layout, <kbd>[</kbd> <kbd>]</kbd> cycle through them.</p>
     </div>
 
     <div class="group">
-      <h2>3 · Colour grade</h2>
+      <h2>4 · Colour grade</h2>
       <div id="gradeRow" class="chips"></div>
       <p class="hint">A real gradient-map grade, applied per panel on canvas.</p>
     </div>
 
     <div class="group">
-      <h2>4 · Panel <span id="panelLabel" class="panel-label"></span></h2>
+      <h2>5 · Panel <span id="panelLabel" class="panel-label"></span></h2>
       <p class="hint">Click a panel on the cover to select it, drag it to reposition the photo, scroll to zoom.</p>
       <label>Photo in this panel
         <select id="panelPhoto"></select>
@@ -75,7 +84,7 @@
     </div>
 
     <div class="group">
-      <h2>5 · Caption</h2>
+      <h2>6 · Caption</h2>
       <label>Title
         <input id="title" type="text" maxlength="24" value="Neon Coast">
       </label>
@@ -91,14 +100,14 @@
     </div>
 
     <div class="group">
-      <h2>6 · Export</h2>
+      <h2>7 · Export</h2>
       <div id="sizeRow" class="chips"></div>
       <div class="row">
         <button id="exportOne" type="button" class="primary">Export PNG</button>
         <button id="exportAll" type="button">Export all 4 sizes</button>
       </div>
       <p id="status" role="status"></p>
-      <p class="hint">Shortcuts: <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo, <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo.</p>
+      <p class="hint">Shortcuts: <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo, <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo, <kbd>R</kbd> surprise me.</p>
     </div>
   </section>
 

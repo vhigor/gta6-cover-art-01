@@ -1,11 +1,12 @@
-// Vice Coast Cover Studio — a gta6-cover-art-01 entry (Node 22, standard
-// library only). The app is this directory's app/ folder: plain static files
-// a desktop browser loads offline (app/index.html and its ES modules, two
-// OFL fonts and two sample photos made for make.fun, no network request).
-// The editor offers 7 layouts (incl. Diagonal Split), 7 gradient-map
-// grades (incl. Miami Teal and Ember Red), per-panel colour adjust sliders
-// (brightness / contrast / saturation), keyboard layout shortcuts and four
-// PNG export sizes (square, portrait, wide, story).
+// Vice Coast Cover Studio v2 — a gta6-cover-art-01 entry (Node 22,
+// standard library only). The app is this directory's app/ folder: plain
+// static files a desktop browser loads offline (app/index.html and its ES
+// modules, two OFL fonts and two sample photos made for make.fun, no
+// network request). The editor offers 7 layouts (incl. Diagonal Split),
+// 7 gradient-map grades (incl. Miami Teal and Ember Red), per-panel
+// colour adjust sliders (brightness / contrast / saturation), three
+// one-click presets plus a "Surprise me" randomizer (R), keyboard layout
+// shortcuts and four PNG export sizes (square, portrait, wide, story).
 // This program hands it in: it copies app/ and screenshots/ from beside
 // this file to /output and writes /output/dossier.json, the summary the
 // judge reads, with the vendored make.fun library.
@@ -21,6 +22,12 @@ import { buildDossier } from './vendor/makefun-app.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+
+// The entrypoint must exist before anything is copied: a missing
+// index.html (or its module entry) would hand in an app that never loads.
+for (const entry of ['app/index.html', 'app/src/main.js', 'app/style.css']) {
+  if (!existsSync(join(here, entry))) throw new Error(`missing entrypoint file: ${entry}`);
+}
 
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'app'), join(out, 'app'), { recursive: true });
