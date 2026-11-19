@@ -1,9 +1,18 @@
-// Vice Coast Cover Studio — the cover renderer.
+// Vice Coast Cover Studio — the cover renderer (improvement pass, Nov 2026).
 //
 // Every cover is drawn on a 2D canvas from one state object: a layout of
 // photo panels, a colour grade, a title in Anton, a subtitle in Pacifico,
 // a star meter, grain and a vignette. The same drawCover() paints the live
-// preview (small canvas) and the exported PNG (full-size offscreen canvas).
+// preview (small canvas) and the exported PNG (full-size offscreen canvas),
+// so what you see is what you get.
+//
+// Layouts: seven. The newest, Diagonal Split, shears each panel row in
+// opposite directions, so the seams between panels run diagonally across
+// the poster like a torn-paper collage. Grades: seven gradient maps.
+// Sizes: four export sizes, square through story.
+// Panels: each one carries its own photo, zoom, pan and colour adjust
+// (brightness / contrast / saturation), applied with ctx.filter at draw
+// time and baked into the tile before the grade runs.
 
 export const LAYOUTS = {
   quad: { name: 'Quad Grid', panels: 4 },
@@ -12,6 +21,7 @@ export const LAYOUTS = {
   nine: { name: 'Nine Grid', panels: 8 },
   tilted: { name: 'Tilted Snaps', panels: 4 },
   duo: { name: 'Duo', panels: 2 },
+  diagonal: { name: 'Diagonal Split', panels: 4 },
 };
 
 export const GRADES = {
@@ -40,15 +50,28 @@ export const GRADES = {
     shadows: [0, 0, 0], midtones: [119, 119, 119], highlights: [255, 255, 255],
     strength: 0.9, swatch: ['#000000', '#777777', '#ffffff'],
   },
+  miami: {
+    name: 'Miami Teal',
+    shadows: [6, 34, 40], midtones: [0, 186, 168], highlights: [255, 242, 178],
+    strength: 0.8, swatch: ['#062228', '#00baa8', '#fff2b2'],
+  },
+  ember: {
+    name: 'Ember Red',
+    shadows: [48, 5, 5], midtones: [255, 64, 38], highlights: [255, 205, 92],
+    strength: 0.8, swatch: ['#300505', '#ff4026', '#ffcd5c'],
+  },
 };
 
 export const SIZES = {
   square: { name: 'Square 1080 × 1080', w: 1080, h: 1080 },
   portrait: { name: 'Portrait 1080 × 1350', w: 1080, h: 1350 },
   wide: { name: 'Wide 1920 × 1080', w: 1920, h: 1080 },
+  story: { name: 'Story 1080 × 1920', w: 1080, h: 1920 },
 };
 
-/** Panel rectangles for a layout, as fractions of the canvas (x, y, w, h). */
+/** Panel rectangles for a layout, as fractions of the canvas (x, y, w, h).
+ *  `rot` rotates a panel (tilted polaroids); `skew` shears it, so the panel
+ *  is drawn as a parallelogram and the seams run diagonally. */
 export function layoutPanels(layout, w, h) {
   const band = 0.22; // title band height, as a fraction of h
   const artH = 1 - band;
@@ -93,6 +116,21 @@ export function layoutPanels(layout, w, h) {
         { x: 0.02, y: 0.02, w: 0.47, h: artH - 0.04, rot: 0 },
         { x: 0.51, y: 0.02, w: 0.47, h: artH - 0.04, rot: 0 },
       ];
+    case 'diagonal': {
+      // Two rows sheared in opposite directions: the top row leans right,
+      // the bottom row leans left, and the seam between them runs on a
+      // diagonal. The x offsets leave room for the shear so no panel is
+      // clipped at the canvas edge (the shear shifts a row by about
+      // skew * row height in pixels, most on tall story covers).
+      const rowH = 0.35;
+      const shear = 0.10;
+      return [
+        { x: 0.02, y: 0.02, w: 0.47, h: rowH, skew: shear },
+        { x: 0.51, y: 0.02, w: 0.40, h: rowH, skew: shear },
+        { x: 0.07, y: 0.40, w: 0.44, h: rowH, skew: -shear },
+        { x: 0.53, y: 0.40, w: 0.40, h: rowH, skew: -shear },
+      ];
+    }
     default:
       return layoutPanels('quad', w, h);
   }
@@ -154,8 +192,19 @@ function applyGrade(ctx, x, y, w, h, grade) {
   ctx.putImageData(img, x, y);
 }
 
-/** Draws one photo into a panel rect, cover-fit with the panel's zoom and pan.
- *  The pan is clamped so the photo always covers the panel — no dark gaps. */
+/** The canvas filter string for a panel's adjust sliders. Defaults are 1,
+ *  which renders exactly as before — the filter is skipped entirely then. */
+function adjustFilter(panel) {
+  const b = panel?.bright ?? 1;
+  const c = panel?.contrast ?? 1;
+  const s = panel?.sat ?? 1;
+  if (b === 1 && c === 1 && s === 1) return '';
+  return `brightness(${b}) contrast(${c}) saturate(${s})`;
+}
+
+/** Draws one photo into a panel rect, cover-fit with the panel's zoom, pan
+ *  and colour adjust. The pan is clamped so the photo always covers the
+ *  panel — no dark gaps. */
 function drawPhotoInto(ctx, photo, rect, panel) {
   const { x, y, w, h } = rect;
   const iw = photo.naturalWidth;
@@ -167,7 +216,10 @@ function drawPhotoInto(ctx, photo, rect, panel) {
   const maxOy = Math.max(0, (ph - h) / 2) / h;
   const ox = Math.max(-maxOx, Math.min(maxOx, panel?.ox ?? 0)) * w;
   const oy = Math.max(-maxOy, Math.min(maxOy, panel?.oy ?? 0)) * h;
+  const filter = adjustFilter(panel);
+  if (filter) ctx.filter = filter;
   ctx.drawImage(photo, x + (w - pw) / 2 + ox, y + (h - ph) / 2 + oy, pw, ph);
+  if (filter) ctx.filter = 'none';
 }
 
 let noiseCanvas = null;
@@ -256,6 +308,19 @@ function drawTitleBlock(ctx, state, w, h) {
     halftoneDots(ctx, bx, by, bw, bh, '#ff2e88');
     ctx.fillStyle = '#ff2e88';
     ctx.fillRect(bx, by, bw, Math.max(3, h * 0.006));
+    if (state.layout === 'diagonal') {
+      // A slanted accent stripe echoes the diagonal seams above the band.
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(bx, by + bh);
+      ctx.lineTo(bx + bw * 0.22, by);
+      ctx.lineTo(bx + bw * 0.30, by);
+      ctx.lineTo(bx + bw * 0.08, by + bh);
+      ctx.closePath();
+      ctx.fillStyle = '#7df9ff';
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   const cx = bx + bw / 2;
@@ -314,10 +379,51 @@ function drawTitleBlock(ctx, state, w, h) {
   ctx.restore();
 }
 
+/** Paints one panel tile (photo + grade, or the empty placeholder) onto
+ *  an offscreen canvas the size of the panel, then places it on the main
+ *  canvas — rotated for tilted panels, sheared for diagonal ones. */
+function placeTile(ctx, tile, frac, px, py, pw, ph, w, h) {
+  ctx.save();
+  if (frac.rot) {
+    ctx.translate(px + pw / 2, py + ph / 2);
+    ctx.rotate(frac.rot);
+    ctx.translate(-pw / 2, -ph / 2);
+    // Polaroid white frame, thicker at the foot.
+    ctx.fillStyle = '#f8f4ec';
+    ctx.fillRect(-pw * 0.03, -ph * 0.03, pw * 1.06, ph * 1.06 + ph * 0.08);
+    ctx.drawImage(tile, 0, 0);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, 0, pw, ph);
+  } else if (frac.skew) {
+    // Shear: x' = x + skew * y, so the panel's seams run diagonally.
+    ctx.translate(px, py);
+    ctx.transform(1, 0, frac.skew, 1, 0, 0);
+    ctx.drawImage(tile, 0, 0);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(2, w * 0.004);
+    ctx.strokeRect(0, 0, pw, ph);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.lineWidth = Math.max(1, w * 0.002);
+    ctx.strokeRect(w * 0.004, h * 0.004, pw - w * 0.008, ph - h * 0.008);
+  } else {
+    ctx.drawImage(tile, px, py);
+    // Inked poster edge: white gutter line and a dark inner edge.
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(2, w * 0.004);
+    ctx.strokeRect(px, py, pw, ph);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.lineWidth = Math.max(1, w * 0.002);
+    ctx.strokeRect(px + w * 0.004, py + h * 0.004, pw - w * 0.008, ph - h * 0.008);
+  }
+  ctx.restore();
+}
+
 /**
  * Draws the whole cover onto `canvas` (any size) from `state`:
  *   state = { layout, grade, title, subtitle, stars, grain, photos[], panels[] }
- * photos are Image elements (or null); panels are { photo, zoom, ox, oy }.
+ * photos are Image elements (or null); panels are
+ * { photo, zoom, ox, oy, bright, contrast, sat }.
  */
 export function drawCover(canvas, state) {
   const ctx = canvas.getContext('2d');
@@ -326,7 +432,8 @@ export function drawCover(canvas, state) {
   const grade = GRADES[state.grade] ?? GRADES.sunset;
   const rects = layoutPanels(state.layout, w, h);
 
-  // Backdrop: deep violet, or a sunset sky for the tilted layout.
+  // Backdrop: deep violet; a sunset sky for the tilted layout, and a
+  // diagonal sunset wash behind the diagonal split.
   if (state.layout === 'tilted') {
     const sky = ctx.createLinearGradient(0, 0, 0, h);
     sky.addColorStop(0, '#2a0e3f');
@@ -339,14 +446,21 @@ export function drawCover(canvas, state) {
     ctx.beginPath();
     ctx.arc(w * 0.5, h * 0.42, w * 0.16, 0, Math.PI * 2);
     ctx.fill();
+  } else if (state.layout === 'diagonal') {
+    const wash = ctx.createLinearGradient(0, 0, w, h);
+    wash.addColorStop(0, '#1a0b2e');
+    wash.addColorStop(0.5, '#7a1e5c');
+    wash.addColorStop(1, '#ff7a3d');
+    ctx.fillStyle = wash;
+    ctx.fillRect(0, 0, w, h);
   } else {
     ctx.fillStyle = '#12081f';
     ctx.fillRect(0, 0, w, h);
   }
 
-  // Panels: each photo is graded on its own tile, then placed (tilted ones rotated).
+  // Panels: each photo is adjusted and graded on its own tile, then placed.
   rects.forEach((frac, i) => {
-    const panel = state.panels[i] ?? { photo: -1, zoom: 1, ox: 0, oy: 0 };
+    const panel = state.panels[i] ?? { photo: -1, zoom: 1, ox: 0, oy: 0, bright: 1, contrast: 1, sat: 1 };
     const px = Math.round(frac.x * w);
     const py = Math.round(frac.y * h);
     const pw = Math.round(frac.w * w);
@@ -377,29 +491,7 @@ export function drawCover(canvas, state) {
       tctx.fillText(`PANEL ${i + 1} — ADD A PHOTO`, pw / 2, ph / 2);
     }
 
-    ctx.save();
-    if (frac.rot) {
-      ctx.translate(px + pw / 2, py + ph / 2);
-      ctx.rotate(frac.rot);
-      ctx.translate(-pw / 2, -ph / 2);
-      // Polaroid white frame, thicker at the foot.
-      ctx.fillStyle = '#f8f4ec';
-      ctx.fillRect(-pw * 0.03, -ph * 0.03, pw * 1.06, ph * 1.06 + ph * 0.08);
-      ctx.drawImage(tile, 0, 0);
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(0, 0, pw, ph);
-    } else {
-      ctx.drawImage(tile, px, py);
-      // Inked poster edge: white gutter line and a dark inner edge.
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = Math.max(2, w * 0.004);
-      ctx.strokeRect(px, py, pw, ph);
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
-      ctx.lineWidth = Math.max(1, w * 0.002);
-      ctx.strokeRect(px + w * 0.004, py + h * 0.004, pw - w * 0.008, ph - h * 0.008);
-    }
-    ctx.restore();
+    placeTile(ctx, tile, frac, px, py, pw, ph, w, h);
   });
 
   drawTitleBlock(ctx, state, w, h);

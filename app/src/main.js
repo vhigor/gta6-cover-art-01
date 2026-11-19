@@ -1,6 +1,11 @@
-// Vice Coast Cover Studio — wires the editor: photos, panels, layout, grade,
-// caption, export and undo/redo. The preview canvas and the exported PNG are
-// both painted by drawCover() in ./cover.js, so what you see is what you get.
+// Vice Coast Cover Studio — wires the editor: photos, panels, layout,
+// grade, caption, per-panel colour adjust, export and undo/redo. The
+// preview canvas and the exported PNG are both painted by drawCover() in
+// ./cover.js, so what you see is what you get.
+//
+// Keyboard: 1–7 switches layout, [ and ] cycle layouts, Ctrl+Z undoes,
+// Ctrl+Shift+Z / Ctrl+Y redoes. Shortcuts never fire while you type in a
+// text field. The editor also works at narrow widths (see style.css).
 import { drawCover, layoutPanels, titleBand, LAYOUTS, GRADES, SIZES } from './cover.js';
 import { runShot } from './shots.js';
 
@@ -9,10 +14,24 @@ const canvas = $('cover');
 const statusEl = $('status');
 
 const PREVIEW_MAX = 720; // preview canvas long side, in pixels
+const LAYOUT_KEYS = Object.keys(LAYOUTS);
 
-/** A fresh panel: which photo it shows, its zoom and its pan. */
+/** A fresh panel: which photo it shows, its zoom, pan and colour adjust. */
 function freshPanel(photo = 0) {
-  return { photo, zoom: 1, ox: 0, oy: 0 };
+  return { photo, zoom: 1, ox: 0, oy: 0, bright: 1, contrast: 1, sat: 1 };
+}
+
+/** Fills in any missing panel field (older snapshots, shot patches). */
+function normalizePanel(p, fallbackPhoto = 0) {
+  return {
+    photo: p?.photo ?? fallbackPhoto,
+    zoom: p?.zoom ?? 1,
+    ox: p?.ox ?? 0,
+    oy: p?.oy ?? 0,
+    bright: p?.bright ?? 1,
+    contrast: p?.contrast ?? 1,
+    sat: p?.sat ?? 1,
+  };
 }
 
 const state = {
@@ -51,6 +70,7 @@ function snapshot() {
 function restore(json) {
   const s = JSON.parse(json);
   Object.assign(state, s);
+  state.panels = state.panels.map((p) => normalizePanel(p));
   syncControls();
   redraw();
 }
@@ -124,7 +144,7 @@ function refitPanels() {
   const n = panelCount();
   const next = [];
   for (let i = 0; i < n; i++) {
-    next.push(state.panels[i] ?? freshPanel(i % filledPhotoCount()));
+    next.push(state.panels[i] ? normalizePanel(state.panels[i]) : freshPanel(i % filledPhotoCount()));
   }
   state.panels = next;
   state.selected = Math.min(state.selected, n - 1);
@@ -132,6 +152,23 @@ function refitPanels() {
 
 function filledPhotoCount() {
   return Math.max(1, state.photos.filter(Boolean).length);
+}
+
+/** Switches to a layout by key, refitting panels and recording history. */
+function pickLayout(key) {
+  if (!LAYOUTS[key] || key === state.layout) return;
+  state.layout = key;
+  refitPanels();
+  pushHistory();
+  syncControls();
+  redraw();
+}
+
+/** Steps the layout forward (+1) or back (-1) through the picker order. */
+function cycleLayout(dir) {
+  const i = LAYOUT_KEYS.indexOf(state.layout);
+  const next = LAYOUT_KEYS[(i + dir + LAYOUT_KEYS.length) % LAYOUT_KEYS.length];
+  pickLayout(next);
 }
 
 // --- photos ------------------------------------------------------------------
@@ -205,6 +242,9 @@ async function loadSample(name) {
     p.zoom = 1;
     p.ox = 0;
     p.oy = 0;
+    p.bright = 1;
+    p.contrast = 1;
+    p.sat = 1;
   });
   renderPhotoSlots();
   pushHistory();
@@ -245,11 +285,12 @@ async function exportOne(sizeKey) {
 }
 
 async function exportAll() {
-  for (const key of Object.keys(SIZES)) {
+  const keys = Object.keys(SIZES);
+  for (const key of keys) {
     await exportOne(key);
     await new Promise((r) => setTimeout(r, 350));
   }
-  statusEl.textContent = 'Saved all three sizes — square, portrait and wide.';
+  statusEl.textContent = `Saved all ${keys.length} sizes — square, portrait, wide and story.`;
 }
 
 // --- controls ----------------------------------------------------------------
@@ -277,12 +318,7 @@ function syncControls() {
   $('title').value = state.title;
   $('subtitle').value = state.subtitle;
   $('grainToggle').checked = state.grain;
-  buildButtons('layoutRow', LAYOUTS, state.layout, (key) => {
-    state.layout = key;
-    refitPanels();
-    pushHistory();
-    redraw();
-  });
+  buildButtons('layoutRow', LAYOUTS, state.layout, pickLayout);
   buildButtons('gradeRow', GRADES, state.grade, (key) => {
     state.grade = key;
     pushHistory();
@@ -317,6 +353,13 @@ function renderStars() {
   }
 }
 
+/** The three adjust sliders for the selected panel: value + label. */
+const ADJUST = [
+  { key: 'bright', input: 'panelBright', label: 'panelBrightVal', min: 0.5, max: 1.5, format: (v) => `${v.toFixed(2)}×` },
+  { key: 'contrast', input: 'panelContrast', label: 'panelContrastVal', min: 0.5, max: 1.5, format: (v) => `${v.toFixed(2)}×` },
+  { key: 'sat', input: 'panelSat', label: 'panelSatVal', min: 0, max: 2, format: (v) => `${v.toFixed(2)}×` },
+];
+
 function renderPanelEditor() {
   const panel = state.panels[state.selected];
   if (!panel) return;
@@ -336,6 +379,10 @@ function renderPanelEditor() {
   select.value = String(panel.photo);
   $('panelZoom').value = String(panel.zoom);
   $('panelZoomVal').textContent = `${panel.zoom.toFixed(2)}×`;
+  for (const a of ADJUST) {
+    $(a.input).value = String(panel[a.key]);
+    $(a.label).textContent = a.format(panel[a.key]);
+  }
 }
 
 function wire() {
@@ -365,11 +412,24 @@ function wire() {
     redraw();
   });
   $('panelZoom').addEventListener('change', pushHistory);
+  for (const a of ADJUST) {
+    $(a.input).addEventListener('input', (e) => {
+      const panel = state.panels[state.selected];
+      if (!panel) return;
+      panel[a.key] = Number(e.target.value);
+      $(a.label).textContent = a.format(panel[a.key]);
+      redraw();
+    });
+    $(a.input).addEventListener('change', pushHistory);
+  }
   $('panelReset').addEventListener('click', () => {
     const p = state.panels[state.selected];
     p.zoom = 1;
     p.ox = 0;
     p.oy = 0;
+    p.bright = 1;
+    p.contrast = 1;
+    p.sat = 1;
     pushHistory();
     renderPanelEditor();
     redraw();
@@ -406,13 +466,30 @@ function wire() {
   $('exportAll').addEventListener('click', exportAll);
   $('undo').addEventListener('click', undo);
   $('redo').addEventListener('click', redo);
+
+  // Keyboard: digits switch layout, [ ] cycle it, Ctrl+Z / Ctrl+Shift+Z
+  // (or Ctrl+Y) undo and redo. Never while typing in a field.
   document.addEventListener('keydown', (e) => {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
       e.preventDefault();
       undo();
     } else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
       e.preventDefault();
       redo();
+    } else if (!e.ctrlKey && !e.metaKey && !e.altKey && /^[1-7]$/.test(e.key)) {
+      const key = LAYOUT_KEYS[Number(e.key) - 1];
+      if (key) {
+        e.preventDefault();
+        pickLayout(key);
+      }
+    } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === '[') {
+      e.preventDefault();
+      cycleLayout(-1);
+    } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === ']') {
+      e.preventDefault();
+      cycleLayout(1);
     }
   });
 
@@ -483,8 +560,22 @@ async function boot() {
           p.zoom = 1 + (i % 3) * 0.15;
           p.ox = (i % 2 === 0 ? -0.08 : 0.08) * ((i + 1) / 4);
           p.oy = i === 0 ? 0.15 : i % 3 === 0 ? 0.05 : 0;
+          p.bright = 1;
+          p.contrast = 1;
+          p.sat = 1;
         });
         renderPhotoSlots();
+        redraw();
+      },
+      applyAdjust: (adjust) => {
+        // Sets the same colour adjust on every panel (shot scenes use it
+        // to show the adjust sliders doing real work in screenshots).
+        state.panels.forEach((p) => {
+          if (adjust.bright != null) p.bright = adjust.bright;
+          if (adjust.contrast != null) p.contrast = adjust.contrast;
+          if (adjust.sat != null) p.sat = adjust.sat;
+        });
+        renderPanelEditor();
         redraw();
       },
       setState: (patch) => {

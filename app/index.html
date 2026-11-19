@@ -38,11 +38,13 @@
     <div class="group">
       <h2>2 · Layout</h2>
       <div id="layoutRow" class="chips"></div>
+      <p class="hint">Shortcuts: <kbd>1</kbd>–<kbd>7</kbd> pick a layout, <kbd>[</kbd> <kbd>]</kbd> cycle through them.</p>
     </div>
 
     <div class="group">
       <h2>3 · Colour grade</h2>
       <div id="gradeRow" class="chips"></div>
+      <p class="hint">A real gradient-map grade, applied per panel on canvas.</p>
     </div>
 
     <div class="group">
@@ -54,6 +56,18 @@
       <label>Zoom <span id="panelZoomVal">1.00×</span>
         <input id="panelZoom" type="range" min="1" max="3" step="0.05" value="1">
       </label>
+      <fieldset class="adjust">
+        <legend>Colour adjust — this panel</legend>
+        <label>Brightness <span id="panelBrightVal">1.00×</span>
+          <input id="panelBright" type="range" min="0.5" max="1.5" step="0.05" value="1">
+        </label>
+        <label>Contrast <span id="panelContrastVal">1.00×</span>
+          <input id="panelContrast" type="range" min="0.5" max="1.5" step="0.05" value="1">
+        </label>
+        <label>Saturation <span id="panelSatVal">1.00×</span>
+          <input id="panelSat" type="range" min="0" max="2" step="0.05" value="1">
+        </label>
+      </fieldset>
       <div class="row">
         <button id="panelReset" type="button" class="ghost">Reset view</button>
         <button id="fillAll" type="button" class="ghost">Fill all panels with this photo</button>
@@ -81,9 +95,10 @@
       <div id="sizeRow" class="chips"></div>
       <div class="row">
         <button id="exportOne" type="button" class="primary">Export PNG</button>
-        <button id="exportAll" type="button">Export all 3 sizes</button>
+        <button id="exportAll" type="button">Export all 4 sizes</button>
       </div>
       <p id="status" role="status"></p>
+      <p class="hint">Shortcuts: <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo, <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo.</p>
     </div>
   </section>
 

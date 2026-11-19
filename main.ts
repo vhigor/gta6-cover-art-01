@@ -2,6 +2,10 @@
 // library only). The app is this directory's app/ folder: plain static files
 // a desktop browser loads offline (app/index.html and its ES modules, two
 // OFL fonts and two sample photos made for make.fun, no network request).
+// The editor offers 7 layouts (incl. Diagonal Split), 7 gradient-map
+// grades (incl. Miami Teal and Ember Red), per-panel colour adjust sliders
+// (brightness / contrast / saturation), keyboard layout shortcuts and four
+// PNG export sizes (square, portrait, wide, story).
 // This program hands it in: it copies app/ and screenshots/ from beside
 // this file to /output and writes /output/dossier.json, the summary the
 // judge reads, with the vendored make.fun library.
@@ -10,7 +14,7 @@
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-app.ts';
@@ -29,6 +33,15 @@ if (existsSync(join(here, 'screenshots'))) {
 // the bytes; the others refuse an entry the scorer would refuse (more than
 // 4 screenshots or one over 256 KiB; more than 993 files in app/ or 48 MiB
 // of app files, in all, or a path under app/ over 1000 bytes).
+// Check the screenshots against the gate caps first, so a bad screenshot
+// fails loudly here instead of at the scorer.
+const SHOTS = ['1-cover.jpg', '2-editor.jpg', '3-cover-wide.jpg', '4-editor-tilted.jpg'];
+for (const shot of SHOTS) {
+  const shotPath = join(here, 'screenshots', shot);
+  if (!existsSync(shotPath)) throw new Error(`missing screenshot: ${shot}`);
+  const bytes = statSync(shotPath).size;
+  if (bytes > 262144) throw new Error(`screenshot over the 256 KiB gate cap: ${shot} (${bytes} bytes)`);
+}
 writeFileSync(
   join(out, 'dossier.json'),
   buildDossier(out, {
